@@ -540,7 +540,7 @@ var isNode = function () {
         function addHueInfo(pix) {
             pix.h = getHue(pix.r, pix.g, pix.b);
         }
-
+        
         function analyseImages(img1, img2, width, height) {
             var data1 = img1.data;
             var data2 = img2.data;
@@ -581,16 +581,18 @@ var isNode = function () {
 
             var pixel1 = { r: 0, g: 0, b: 0, a: 0 };
             var pixel2 = { r: 0, g: 0, b: 0, a: 0 };
+            var topAlignedDiff = new Array(width * height).fill(false);
+            var bottomAlignedDiff = new Array(width * height).fill(false);
 
             var skipTheRest = false;
 
+            // Top-aligned comparison
             loop(width, height, function (horizontalPos, verticalPos) {
                 if (skipTheRest) {
                     return;
                 }
 
                 if (skip) {
-                    // only skip if the image isn't small
                     if (verticalPos % skip === 0 || horizontalPos % skip === 0) {
                         return;
                     }
@@ -607,50 +609,76 @@ var isNode = function () {
                     addBrightnessInfo(pixel1);
                     addBrightnessInfo(pixel2);
 
-                    if (isPixelBrightnessSimilar(pixel1, pixel2) || !isWithinComparedArea) {
-                        if (!compareOnly) {
-                            copyGrayScalePixel(pix, offset, pixel2);
-                        }
-                    } else {
-                        if (!compareOnly) {
-                            errorPixel(pix, offset, pixel1, pixel2);
-                        }
-
-                        mismatchCount++;
-                        updateBounds(horizontalPos, verticalPos);
+                    if (!isPixelBrightnessSimilar(pixel1, pixel2) && isWithinComparedArea) {
+                        topAlignedDiff[verticalPos * width + horizontalPos] = true;
                     }
                     return;
                 }
 
-                if (isRGBSimilar(pixel1, pixel2) || !isWithinComparedArea) {
-                    if (!compareOnly) {
-                        copyPixel(pix, offset, pixel1);
-                    }
-                } else if (
-                    ignoreAntialiasing &&
-                    (addBrightnessInfo(pixel1), // jit pixel info augmentation looks a little weird, sorry.
-                    addBrightnessInfo(pixel2),
-                    isAntialiased(pixel1, data1, 1, verticalPos, horizontalPos, width) || isAntialiased(pixel2, data2, 2, verticalPos, horizontalPos, width))
-                ) {
-                    if (isPixelBrightnessSimilar(pixel1, pixel2) || !isWithinComparedArea) {
-                        if (!compareOnly) {
-                            copyGrayScalePixel(pix, offset, pixel2);
-                        }
-                    } else {
-                        if (!compareOnly) {
-                            errorPixel(pix, offset, pixel1, pixel2);
-                        }
+                if (!isRGBSimilar(pixel1, pixel2) && isWithinComparedArea) {
+                    topAlignedDiff[verticalPos * width + horizontalPos] = true;
+                }
+            });
 
-                        mismatchCount++;
-                        updateBounds(horizontalPos, verticalPos);
+            // Bottom-aligned comparison
+            loop(width, height, function (horizontalPos, verticalPos) {
+                var bottomVerticalPos = height - 1 - verticalPos;
+                
+                if (skipTheRest) {
+                    return;
+                }
+
+                if (skip) {
+                    if (bottomVerticalPos % skip === 0 || horizontalPos % skip === 0) {
+                        return;
                     }
-                } else {
+                }
+
+                var offset = (bottomVerticalPos * width + horizontalPos) * 4;
+                if (!getPixelInfo(pixel1, data1, offset, 1) || !getPixelInfo(pixel2, data2, offset, 2)) {
+                    return;
+                }
+
+                var isWithinComparedArea = withinComparedArea(horizontalPos, bottomVerticalPos, width, height, pixel2);
+
+                if (ignoreColors) {
+                    addBrightnessInfo(pixel1);
+                    addBrightnessInfo(pixel2);
+
+                    if (!isPixelBrightnessSimilar(pixel1, pixel2) && isWithinComparedArea) {
+                        bottomAlignedDiff[bottomVerticalPos * width + horizontalPos] = true;
+                    }
+                    return;
+                }
+
+                if (!isRGBSimilar(pixel1, pixel2) && isWithinComparedArea) {
+                    bottomAlignedDiff[bottomVerticalPos * width + horizontalPos] = true;
+                }
+            });
+
+            // Final pass to mark differences and update canvas
+            loop(width, height, function (horizontalPos, verticalPos) {
+                var offset = (verticalPos * width + horizontalPos) * 4;
+                var isTopDiff = topAlignedDiff[verticalPos * width + horizontalPos];
+                var isBottomDiff = bottomAlignedDiff[verticalPos * width + horizontalPos];
+
+                if (!getPixelInfo(pixel1, data1, offset, 1) || !getPixelInfo(pixel2, data2, offset, 2)) {
+                    return;
+                }
+
+                var isWithinComparedArea = withinComparedArea(horizontalPos, verticalPos, width, height, pixel2);
+
+                if (isTopDiff && isBottomDiff && isWithinComparedArea) {
                     if (!compareOnly) {
                         errorPixel(pix, offset, pixel1, pixel2);
                     }
 
                     mismatchCount++;
                     updateBounds(horizontalPos, verticalPos);
+                } else {
+                    if (!compareOnly) {
+                        copyPixel(pix, offset, pixel1);
+                    }
                 }
 
                 if (compareOnly) {
